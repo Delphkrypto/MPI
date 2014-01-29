@@ -17,10 +17,9 @@
 using namespace std;
 
 MPI_Status status;
-//const int n = 6;
 double *A, *C, *B, *D, *At;
-double *Res, tmp;
-int n, Bt, FLAG;
+double *Res, tmp, Bt, tm;
+int n, FLAG;
 int ProcNum = -1;
 int ProcRank = -1;
 
@@ -31,13 +30,11 @@ int main(int argc, char **argv){
 	MPI_Comm_rank(MPI_COMM_WORLD, &ProcRank);
 	if(!ProcRank){
 		freopen("input.txt", "rt", stdin);
+		freopen("output.txt", "wt", stdout);
 		scanf("%d", &n);
-		for (int i = 1; i < ProcNum; ++i)
-			MPI_Send(&n, 1, MPI_INT,i, 0, MPI_COMM_WORLD);
 	}
-	else
-		MPI_Recv(&n, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	
+	MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
 	A = (double *)malloc(n * n * sizeof(double));
 	C = (double *)malloc(n * n * sizeof(double));
 	B = (double *)malloc(n * sizeof(double));
@@ -45,6 +42,7 @@ int main(int argc, char **argv){
 	At = (double *)malloc(n * sizeof(double));
 	Res = (double *)malloc(n * sizeof(double));
 
+	MPI_Barrier(MPI_COMM_WORLD);
 	if(!ProcRank){
 		for (int i = 0; i < n; ++i)
 			if(!(i % ProcNum))
@@ -55,6 +53,17 @@ int main(int argc, char **argv){
 					scanf("%lf", &At[j]);
 				MPI_Send(At, n, MPI_DOUBLE, i % ProcNum, 0, MPI_COMM_WORLD);
 			}
+
+	}
+	else{
+		for (int i = 0; i < n / ProcNum; ++i){
+			MPI_Recv(At, n, MPI_DOUBLE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+			memcpy(&A[i * n], At, n * sizeof(double));
+		}
+	}
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	if(!ProcRank)
 		for (int i = 0; i < n; ++i)
 			if(!(i % ProcNum))
 				scanf("%lf", &B[i / ProcNum]);
@@ -62,165 +71,83 @@ int main(int argc, char **argv){
 				scanf("%lf", &Bt);
 				MPI_Send(&Bt, 1, MPI_DOUBLE, i % ProcNum, 0, MPI_COMM_WORLD);
 			}
-	}
-	else{
-		for (int i = 0; i < n / ProcNum; ++i){
-			MPI_Recv(At, n*n, MPI_DOUBLE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-			memcpy(A + (i * n) * sizeof(double), At, n * sizeof(double));
-		}
+	else
 		for (int i = 0; i < n / ProcNum; ++i){
 			MPI_Recv(&B[i], n, MPI_DOUBLE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	}
-	}
+		}
 
 	MPI_Barrier(MPI_COMM_WORLD);
-
-	///////////////////
-	//if(!ProcRank){
-	//for (int i = 0; i < n; ++i){
-	//	for (int j = 0; j < n; ++j)
-	//	cout << A[i * n + j] << " \t";
-	//	cout << endl;
-	//}
-	//cout << "!" << endl;
-	//for (int j = 0; j < n; ++j)
-	//	cout << B[j] << " \t";
-	//cout << endl;
-	//cout << "!!!" << endl;
-	//}
-	//MPI_Barrier(MPI_COMM_WORLD);
-	//if(ProcRank == 1){
-	//for (int i = 0; i < n; ++i){
-	//	for (int j = 0; j < n; ++j)
-	//	cout << C[i * n + j] << " \t";
-	//	cout << endl;
-	//}
-	//cout << endl;
-	//cout << "!" << endl;
-	//for (int j = 0; j < n; ++j)
-	//	cout << D[j] << " \t";
-	//cout << endl;
-	//cout << "!!!" << endl;
-	//}
-	//MPI_Barrier(MPI_COMM_WORLD);
-	//if(ProcRank == 2){
-	//for (int i = 0; i < n; ++i){
-	//	for (int j = 0; j < n; ++j)
-	//	cout << C[i * n + j] << " \t";
-	//	cout << endl;
-	//}
-	//cout << endl;
-	//cout << "!" << endl;
-	//for (int j = 0; j < n; ++j)
-	//	cout << D[j] << " \t";
-	//cout << endl;
-	//cout << "!!!" << endl;
-	//}
-	///////////////////////
-
+	tm = MPI_Wtime();
+	FLAG = 0;
 	while(FLAG < n)
 	{
-		if(ProcRank == FLAG % ProcNum){
+		if(ProcRank == (FLAG % ProcNum)){
 			for (int i = 0; i < n; ++i)
 				At[i] = A[(FLAG / ProcNum) * n + i]; 
+			Bt = B[FLAG / ProcNum];
 			for (int i = 0; i < ProcNum; ++i)
 				if(i != ProcRank)
 				{
 					MPI_Send(At, n, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
-					MPI_Send(&B[FLAG / ProcNum], 1, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
+					MPI_Send(&Bt, 1, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
 				}
-			int koef = 0;
+			double koef = 0;
 			for (int i = (FLAG / ProcNum) + 1; i < n / ProcNum; ++i){
-				koef = A[i * n] / A[(FLAG / ProcNum) * n]; 
-				for (int j = 0; j < n; ++j)
-					A[i * n + j] -= A[(FLAG / ProcNum) * n + j] * koef;
-				B[i] -= B[FLAG / ProcNum] * koef; 
+				koef = A[i * n + FLAG] / At[FLAG]; 
+				A[i * n + FLAG] = 0;
+				for (int j = FLAG + 1; j < n; ++j)
+					A[i * n + j] -= At[j] * koef;
+				B[i] -= Bt * koef; 
 			}
 		}
 		else{
 			MPI_Recv(At, n, MPI_DOUBLE, FLAG % ProcNum, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 			MPI_Recv(&Bt, 1, MPI_DOUBLE, FLAG % ProcNum, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-			int koef = 0;
-			for (int i = (FLAG / ProcNum) + 1; i < n / ProcNum; ++i){
-				koef = A[i * n] / At[0]; 
-				for (int j = 0; j < n; ++j)
-					A[i * n + j] -= A[(FLAG / ProcNum) * n + j] * koef; 
-				B[i] -= Bt * koef; 
+			double koef = 0;
+			for (int i = (FLAG / ProcNum); i < n / ProcNum; ++i){
+				if((i * ProcNum + ProcRank) > FLAG){
+					koef = A[i * n + FLAG] / At[FLAG]; 
+					A[i * n + FLAG] = 0;
+					for (int j = FLAG + 1; j < n; ++j)
+						A[i * n + j] -= At[j] * koef; 
+					B[i] -= Bt * koef;
+				}
 			}
 		}
+		MPI_Barrier(MPI_COMM_WORLD);
+		++FLAG;
 
 	}
-
-	//for (int i = 0; i < n - 1; ++i){
-	//	if(ProcRank){
-	//		for (int j = (i + 1) / (ProcNum - 1); j < n / (ProcNum - 1); ++j)
-	//			if ((j * (ProcNum - 1) + (ProcRank - 1)) > i){
-	//				int t = j * (ProcNum - 1) + (ProcRank - 1);
-	//				double koef = C[t * n + i] / C[i * n + i];
-	//				C[t * n + i] = 0;
-	//				for (int k = i + 1; k < n; ++k)
-	//					C[j * n + k] -= C[i * n + k] * koef;
-	//				D[j] -= D[i] * koef;
-	//				//MPI_Send(&t, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-	//				//MPI_Send(C, n*n, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-	//				//MPI_Send(D, n, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-	//				//cout << "send number " << t << " from " << ProcRank << endl;
-	//			}
-	//		MPI_Send(C, n*n, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-	//		MPI_Send(D, n, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-	//		if(ProcRank == 2){
-	//			for (int i = 0; i < n; ++i){
-	//				for (int j = 0; j < n; ++j)
-	//					cout << C[i * n + j] << " \t";
-	//				cout << endl;
-	//			}
-	//			cout << endl << endl;
-	//		}
-	//		//cout << "send number " << t << " from " << ProcRank << endl;
-	//	}
-	//	else{
-	//		for (int j = 1; j < ProcNum; ++j){
-	//			MPI_Recv(C, n * n, MPI_DOUBLE, j, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	//			MPI_Recv(D, n, MPI_DOUBLE, j, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	//			for (int k = 0; k < n / (ProcNum - 1); ++k){
-	//				memcpy(A + (((k * (ProcNum - 1) + j - 1) * n) * sizeof(double)) , C + (((k * (ProcNum - 1) + j - 1) * n) * sizeof(double)), n * sizeof(double));
-	//				B[k * (ProcNum - 1) + j - 1] = D[k * (ProcNum - 1) + j - 1];
-	//			}
-	//		}
-	//		
-	//	}
-
-	//	MPI_Barrier(MPI_COMM_WORLD);
-
-	//	if(!ProcRank)
-	//		for (int i = 1; i < ProcNum; ++i){
-	//			MPI_Send(A, n*n, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
-	//			MPI_Send(B, n, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
-	//		}
-	//	else{
-	//		MPI_Recv(C, n*n, MPI_DOUBLE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	//		MPI_Recv(D, n, MPI_DOUBLE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	//	}
-	//}
-
-	if (!ProcRank){
-		for (int i = 0; i < n; ++i){
-			for (int j = 0; j < n; ++j)
-			cout << A[i * n + j] << " ";
-			cout << endl;
+	MPI_Barrier(MPI_COMM_WORLD);
+	FLAG = n - 1;
+	while(FLAG >= 0) {
+		if(ProcRank == (FLAG % ProcNum)){
+			Res[FLAG] = B[FLAG / ProcNum] / A[(FLAG / ProcNum) * n + FLAG];
+		for (int i = 0; i < ProcNum; ++i)
+			if(i != ProcRank)
+				MPI_Send(&Res[FLAG], 1, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
+		for (int i = FLAG / ProcNum - 1; i >= 0; --i){
+				B[i] -= Res[FLAG] * A[n * i + FLAG]; 
+			}
 		}
-
-		for (int i = n - 1; i >= 0; --i){
-			Res[i] = B[i];
-			for (int j = n - 1; j > i; --j)
-				Res[i] -= Res[j] * A[i * n + j];
-			Res[i] /= A[i * n + i];
+		else{
+			MPI_Recv(&Res[FLAG], 1, MPI_DOUBLE, FLAG % ProcNum, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+			for (int i = FLAG / ProcNum; i >= 0; --i){
+				B[i] -= Res[FLAG] * A[n * i + FLAG]; 
+			}
 		}
-		cout << endl;
+		MPI_Barrier(MPI_COMM_WORLD);
+		--FLAG;
+	}
+
+	if (!ProcRank)
 		for (int i = 0; i < n; ++i)
 			cout << Res[i] << " ";
+
+	if(!ProcRank){
+		tm = MPI_Wtime() - tm;
+		cout << endl << tm;
 	}
-	
 	MPI_Finalize();
 	return 0;
 }
